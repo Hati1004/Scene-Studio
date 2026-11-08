@@ -618,7 +618,7 @@ Include only markers that are new or changed. ${roleNote()} npc = other named ch
     const scopes = [['world', '세계 지도', 'fa-earth-asia'], ...W().places.filter((p) => childrenOf(p.id).length).map((p) => [p.id, `${p.name} 내부`, 'fa-house'])];
     const menu = document.createElement('div');
     menu.id = 'mm-menu';
-    menu.innerHTML = `<div class="mm-menu-h">지도 선택</div>${scopes.map(([id, nm, ic]) => `<button data-scope="${esc(id)}" class="${id === active ? 'on' : ''}"><i class="fa-solid ${ic}"></i><span>${esc(nm)}</span>${id === active ? '<i class="fa-solid fa-check mm-menu-ck"></i>' : ''}</button>`).join('')}<div class="mm-menu-sep"></div><button data-act="me"><i class="fa-solid fa-location-crosshairs"></i><span>내 위치 지도로 돌아가기</span></button><button data-act="fold"><i class="fa-solid ${S().collapsed ? 'fa-angles-down' : 'fa-angles-up'}"></i><span>${S().collapsed ? '미니맵 펴기' : '미니맵 접기'}</span></button>`;
+    menu.innerHTML = `<div class="mm-menu-h">지도 선택</div>${scopes.map(([id, nm, ic]) => `<button data-scope="${esc(id)}" class="${id === active ? 'on' : ''}"><i class="fa-solid ${ic}"></i><span>${esc(nm)}</span>${id === active ? '<i class="fa-solid fa-check mm-menu-ck"></i>' : ''}</button>`).join('')}<div class="mm-menu-sep"></div><button data-act="upload"><i class="fa-solid fa-image"></i><span>이 지도에 내 이미지 올리기</span></button><button data-act="me"><i class="fa-solid fa-location-crosshairs"></i><span>내 위치 지도로 돌아가기</span></button><button data-act="fold"><i class="fa-solid ${S().collapsed ? 'fa-angles-down' : 'fa-angles-up'}"></i><span>${S().collapsed ? '미니맵 펴기' : '미니맵 접기'}</span></button>`;
     document.body.appendChild(menu);
     const r = btn.getBoundingClientRect();
     menu.style.top = Math.min(r.bottom + 4, window.innerHeight - menu.offsetHeight - 8) + 'px';
@@ -631,6 +631,7 @@ Include only markers that are new or changed. ${roleNote()} npc = other named ch
       const b = ev.target.closest('button'); if (!b) return;
       if (b.dataset.scope) { viewScope = b.dataset.scope; camPan = { x: 0, y: 0 }; render(); }
       else if (b.dataset.act === 'me') { viewScope = null; camPan = { x: 0, y: 0 }; render(); }
+      else if (b.dataset.act === 'upload') { pickMapImage(active); }
       else if (b.dataset.act === 'fold') { S().collapsed = !S().collapsed; saveSettings(); render(); }
       done();
     });
@@ -775,6 +776,7 @@ Include only markers that are new or changed. ${roleNote()} npc = other named ch
     if (s.imgProvider === 'sd') { if (manual) toastr.info('지도 이미지 생성은 Agent Platform/Gemini 방식에서만 지원해요.'); return; }
     const kids = childrenOf(scope).filter(hasXY);
     if (!kids.length) { if (manual) toastr.info('이 지도에 배치된 장소가 없어요.'); return; }
+    if (manual && mapOf(scope)?.user && !confirm('직접 올린 지도가 있어요. AI가 만든 지도로 바꿀까요?\n(바꾸면 올린 지도는 사라져요)')) return;
     mapBusy = true; render(); renderEditor();
     try {
       const list = kids.map((p) => `- ${p.name} (${KINDS[kindOf(p)][2]}) at x=${p.x}%, y=${p.y}%`).join('\n');
@@ -1680,6 +1682,35 @@ ${recent}`);
   }
   const galleryChecked = () => [...document.querySelectorAll('#mm_gallery .mm-g-item')].filter((l) => l.querySelector('input').checked).map((l) => l.dataset.url);
 
+  /* 내가 가진 이미지를 지도로 올리기 (설정 화면 · 미니맵 메뉴 · 드래그앤드롭 공용) */
+  async function importMapImage(file, scope) {
+    if (!file) return false;
+    if (!/^image\//.test(file.type || '')) { toastr.error('이미지 파일만 올릴 수 있어요.'); return false; }
+    if (file.size > 25 * 1024 * 1024) { toastr.error('이미지가 너무 커요. 25MB 이하로 올려 주세요.'); return false; }
+    try {
+      const { data, ratio } = await resizeImage(file);
+      const url = await saveImage(data.split(',')[1], 'image/jpeg');
+      const entry = { url, ratio, user: true };
+      delete tempMaps[scope]; delete mapFailed[scope];
+      if (url.startsWith('data:')) tempMaps[scope] = entry; else { W().maps[scope] = entry; saveMeta(); }
+      if (scope === 'world' && S().mapImage) { S().mapImage = ''; S().mapRatio = 1; saveSettings(); }
+      camPan = { x: 0, y: 0 };
+      renderEditor(); render();
+      toastr.success(`"${scopeName(scope)}" 지도로 설정했어요. 핀 위치가 그림과 다르면 지도에서 드래그해 맞춰 주세요.`);
+      return true;
+    } catch (e) {
+      console.warn('[Minimap] 지도 업로드 실패', e);
+      toastr.error('이미지를 불러오지 못했어요.');
+      return false;
+    }
+  }
+  function pickMapImage(scope) {
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = 'image/*';
+    inp.addEventListener('change', () => importMapImage(inp.files?.[0], scope));
+    inp.click();
+  }
+
   function resizeImage(file) {
     return new Promise((resolve, reject) => {
       const fr = new FileReader();
@@ -1858,7 +1889,8 @@ ${recent}`);
         <div class="mm-edit-box" id="mm_edit_map"><div class="mm-viewport"><div class="mm-stage"></div></div></div>
         <div class="mm-hint" id="mm_map_state"></div>
         <div class="mm-set-row"><div class="menu_button" id="mm_map_gen">이 지도 이미지 생성/재생성</div><div class="menu_button" id="mm_clear_img">지도 이미지 제거</div></div>
-        <div class="mm-set-row"><span>직접 올리기</span><input type="file" id="mm_file" accept="image/*"></div>
+        <div class="mm-set-row"><div class="menu_button" id="mm_upload"><i class="fa-solid fa-image"></i> 내 이미지 지도 올리기</div><input type="file" id="mm_file" accept="image/*" hidden></div>
+        <div class="mm-hint">이미 가진 지도 그림(JPG·PNG·WEBP)을 지금 편집 중인 지도에 씌워요. 위 지도 칸에 이미지를 끌어다 놓아도 돼요. 그림 비율은 유지되고, 장소 핀은 지도에서 드래그해 그림에 맞춰 옮기세요.</div>
         <label class="checkbox_label"><input type="checkbox" data-key="autoMap"><span>장소가 바뀌었는데 지도가 없으면 자동 생성 (이미지 요금 발생)</span></label>
         <div class="mm-set-row"><span>지도 화풍</span><input type="text" class="text_pole" data-key="mapStyle"></div>
         <div class="mm-set-row"><span>월드 분위기</span><input type="text" class="text_pole" id="mm_look" placeholder="예: 중세 판타지 산악 마을, 따뜻한 햇살"></div>
@@ -2032,16 +2064,18 @@ ${recent}`);
     $('#mm_test').on('click', testGemini);
     $('#mm_scope').on('change', function () { editScope = this.value; renderEditor(); });
     $('#mm_map_gen').on('click', () => generateMap(editScope, true));
+    $('#mm_upload').on('click', () => $('#mm_file').trigger('click'));
     $('#mm_file').on('change', async function () {
-      const f = this.files?.[0]; if (!f) return;
-      try {
-        const { data, ratio } = await resizeImage(f);
-        const url = await saveImage(data.split(',')[1], 'image/jpeg');
-        const entry = { url, ratio, user: true };
-        if (url.startsWith('data:')) tempMaps[editScope] = entry; else { W().maps[editScope] = entry; saveMeta(); }
-        renderEditor(); render();
-      } catch { toastr.error('이미지를 불러오지 못했어요.'); }
+      await importMapImage(this.files?.[0], editScope);
       this.value = '';
+    });
+    const dropBox = document.querySelector('#mm_edit_map');
+    dropBox.addEventListener('dragover', (e) => { if ([...(e.dataTransfer?.types || [])].includes('Files')) { e.preventDefault(); dropBox.classList.add('mm-drop'); } });
+    dropBox.addEventListener('dragleave', () => dropBox.classList.remove('mm-drop'));
+    dropBox.addEventListener('drop', (e) => {
+      const f = e.dataTransfer?.files?.[0]; if (!f) return;
+      e.preventDefault(); dropBox.classList.remove('mm-drop');
+      importMapImage(f, editScope);
     });
     $('#mm_clear_img').on('click', () => {
       delete W().maps[editScope]; delete tempMaps[editScope]; delete mapFailed[editScope];

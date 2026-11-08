@@ -317,3 +317,6 @@
 .mm-help summary { cursor: pointer; font-weight: 600; }
 .mm-help ol { margin: 6px 0 4px 18px; padding: 0; word-break: keep-all; }
 .mm-help li { margin: 3px 0; }
+
+/* 이미지 지도 올리기: 드래그앤드롭 표시 */
+.mm-edit-box.mm-drop { outline: 2px dashed var(--SmartThemeQuoteColor, #6cf); outline-offset: -4px; }
